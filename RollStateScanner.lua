@@ -1,220 +1,279 @@
--- RNG ROLLATTACKS | Roll State Scanner V2
--- Passive diagnostics. Does not fire remotes, change states, or auto-roll.
--- Purpose: distinguish an incomplete roll from an equip/punch lock.
+-- RNG ROLLATTACKS | ROLL STATE SCANNER V3 SAFE
+-- Passive and low overhead. NO __namecall hooks, remote interception, or remote calls.
+-- Shows UI and equipped-tool changes as the REAL in-game Roll button is used.
 local Players=game:GetService("Players")
-local UserInputService=game:GetService("UserInputService")
-local player=Players.LocalPlayer
-if not player then return end
+local UIS=game:GetService("UserInputService")
+local p=Players.LocalPlayer
+if not p then return end
 local env=_G
 if type(getgenv)=="function" then
     local ok,v=pcall(getgenv)
     if ok and type(v)=="table" then env=v end
 end
-if type(env.RNG_ROLL_STATE_SCAN_CLOSE)=="function" then pcall(env.RNG_ROLL_STATE_SCAN_CLOSE) end
-local gui=Instance.new("ScreenGui")
-gui.Name="RNG_RollState_Scanner"
-gui.ResetOnSpawn=false
-gui.Parent=player:WaitForChild("PlayerGui")
-local function make(kind,parent,props)
-    local o=Instance.new(kind)
-    for k,v in pairs(props) do o[k]=v end
-    o.Parent=parent
-    return o
+if type(env.RNG_ROLL_STATE_SCAN_CLOSE)=="function" then
+    pcall(env.RNG_ROLL_STATE_SCAN_CLOSE)
 end
-local panel=make("Frame",gui,{
-    Position=UDim2.new(.03,0,.36,0),Size=UDim2.fromOffset(308,345),
-    BackgroundColor3=Color3.fromRGB(18,13,30),BorderSizePixel=0
+
+local alive=true
+local scanning=false
+local connections={}
+local scanConnections={}
+local lines={}
+local scanStart=0
+local maxLines=90
+
+local function connect(signal,fn,bucket)
+    local c=signal:Connect(fn)
+    table.insert(bucket or connections,c)
+    return c
+end
+local function clear(bucket)
+    for _,c in ipairs(bucket) do
+        pcall(function() c:Disconnect() end)
+    end
+    for i=#bucket,1,-1 do bucket[i]=nil end
+end
+local function create(kind,parent,props)
+    local obj=Instance.new(kind)
+    for k,v in pairs(props or {}) do obj[k]=v end
+    obj.Parent=parent
+    return obj
+end
+local screen=create("ScreenGui",p:WaitForChild("PlayerGui"),{
+    Name="RNG_RollState_Scanner_Safe",ResetOnSpawn=false
 })
-make("UICorner",panel,{CornerRadius=UDim.new(0,13)})
-make("UIStroke",panel,{Color=Color3.fromRGB(145,85,246),Thickness=1})
-local head=make("Frame",panel,{
-    Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(37,25,57),
+local frame=create("Frame",screen,{
+    Size=UDim2.fromOffset(306,335),
+    Position=UDim2.new(.5,-153,.48,-167),
+    BackgroundColor3=Color3.fromRGB(18,13,29),
     BorderSizePixel=0
 })
-make("UICorner",head,{CornerRadius=UDim.new(0,11)})
-make("TextLabel",head,{
-    Position=UDim2.fromOffset(10,6),Size=UDim2.new(1,-55,0,30),
-    BackgroundTransparency=1,Text="ROLL // STATE SCANNER",Font=Enum.Font.GothamBold,
-    TextColor3=Color3.new(1,1,1),TextSize=14,TextXAlignment=Enum.TextXAlignment.Left
+create("UICorner",frame,{CornerRadius=UDim.new(0,12)})
+create("UIStroke",frame,{Color=Color3.fromRGB(155,95,255),Thickness=1})
+local header=create("Frame",frame,{
+    Size=UDim2.new(1,0,0,42),
+    BackgroundColor3=Color3.fromRGB(40,29,61),BorderSizePixel=0
 })
-local exit=make("TextButton",head,{
-    Position=UDim2.new(1,-37,0,8),Size=UDim2.fromOffset(27,27),
-    Text="X",TextColor3=Color3.new(1,1,1),TextSize=15,
-    BackgroundColor3=Color3.fromRGB(64,46,88),BorderSizePixel=0
-})
-local msg=make("TextLabel",panel,{
-    Position=UDim2.fromOffset(11,48),Size=UDim2.new(1,-22,0,40),
-    Text="Start scan, then use the game's normal Roll button.",
-    TextWrapped=true,BackgroundTransparency=1,Font=Enum.Font.Gotham,
-    TextColor3=Color3.fromRGB(211,195,231),TextSize=11,
+create("UICorner",header,{CornerRadius=UDim.new(0,12)})
+create("TextLabel",header,{
+    Position=UDim2.fromOffset(10,7),Size=UDim2.new(1,-52,0,27),
+    BackgroundTransparency=1,Text="ROLL // SAFE SCANNER V3",
+    Font=Enum.Font.GothamBold,TextSize=13,
+    TextColor3=Color3.new(1,1,1),
     TextXAlignment=Enum.TextXAlignment.Left
 })
-local start=make("TextButton",panel,{
-    Position=UDim2.fromOffset(11,94),Size=UDim2.fromOffset(138,32),
-    BackgroundColor3=Color3.fromRGB(143,82,245),BorderSizePixel=0,
-    Text="START 18s",TextColor3=Color3.new(1,1,1),
-    TextSize=12,Font=Enum.Font.GothamBold
+local exit=create("TextButton",header,{
+    Position=UDim2.new(1,-35,0,9),Size=UDim2.fromOffset(25,25),
+    BackgroundColor3=Color3.fromRGB(69,47,94),BorderSizePixel=0,
+    Text="X",TextColor3=Color3.new(1,1,1),
+    TextSize=14,Font=Enum.Font.GothamBold
 })
-local copy=make("TextButton",panel,{
-    Position=UDim2.fromOffset(159,94),Size=UDim2.fromOffset(138,32),
-    BackgroundColor3=Color3.fromRGB(70,48,95),BorderSizePixel=0,
-    Text="COPY REPORT",TextColor3=Color3.new(1,1,1),
-    TextSize=12,Font=Enum.Font.GothamBold
+local status=create("TextLabel",frame,{
+    Position=UDim2.fromOffset(11,46),
+    Size=UDim2.new(1,-22,0,37),BackgroundTransparency=1,
+    Text="Read-only. Tap START, then use normal Roll.",
+    TextColor3=Color3.fromRGB(210,196,233),
+    TextWrapped=true,TextSize=11,Font=Enum.Font.Gotham,
+    TextXAlignment=Enum.TextXAlignment.Left
 })
-local output=make("TextBox",panel,{
-    Position=UDim2.fromOffset(11,137),Size=UDim2.new(1,-22,1,-148),
-    BackgroundColor3=Color3.fromRGB(29,22,45),BorderSizePixel=0,
-    Font=Enum.Font.Code,TextSize=10,TextWrapped=true,
-    TextColor3=Color3.new(1,1,1),TextXAlignment=Enum.TextXAlignment.Left,
-    TextYAlignment=Enum.TextYAlignment.Top,MultiLine=true,
-    TextEditable=false,ClearTextOnFocus=false,
-    Text="Scan records game roll requests and Punch/equipped-attack changes."
+local start=create("TextButton",frame,{
+    Position=UDim2.fromOffset(11,87),Size=UDim2.fromOffset(137,34),
+    BackgroundColor3=Color3.fromRGB(150,89,248),BorderSizePixel=0,
+    Text="START 18S",TextSize=12,Font=Enum.Font.GothamBold,
+    TextColor3=Color3.new(1,1,1)
 })
-local alive,armed=true,false
-local connections={}
-local notes={}
-local namecallHooked=false
-local function wire(sig,fn)
-    local c=sig:Connect(fn)
-    connections[#connections+1]=c
+local copy=create("TextButton",frame,{
+    Position=UDim2.fromOffset(157,87),Size=UDim2.fromOffset(138,34),
+    BackgroundColor3=Color3.fromRGB(77,54,104),BorderSizePixel=0,
+    Text="COPY REPORT",TextSize=12,Font=Enum.Font.GothamBold,
+    TextColor3=Color3.new(1,1,1)
+})
+local output=create("TextBox",frame,{
+    Position=UDim2.fromOffset(11,130),
+    Size=UDim2.new(1,-22,1,-141),
+    BackgroundColor3=Color3.fromRGB(31,24,46),
+    BorderSizePixel=0,ClearTextOnFocus=false,
+    Text="No game hooks. Observes only Roll UI and tools.",
+    TextWrapped=true,MultiLine=true,TextEditable=false,
+    TextXAlignment=Enum.TextXAlignment.Left,
+    TextYAlignment=Enum.TextYAlignment.Top,
+    Font=Enum.Font.Code,TextSize=10,
+    TextColor3=Color3.new(1,1,1)
+})
+local function note(message)
+    if not alive or #lines>=maxLines then return end
+    local t=scanning and (os.clock()-scanStart) or 0
+    lines[#lines+1]=string.format("+%.1fs %s",t,tostring(message):sub(1,175))
+    output.Text=table.concat(lines,"\n")
 end
-local function note(t)
-    if not alive or #notes>=95 then return end
-    notes[#notes+1]=string.format("[%.1fs] %s",os.clock()%100000,tostring(t):sub(1,125))
-    output.Text=table.concat(notes,"\n")
+local function getRollUI()
+    local main=p.PlayerGui:FindFirstChild("MainUI")
+    local button=main and main:FindFirstChild("RollButton")
+    local label=button and button:FindFirstChild("Label")
+    local shadow=button and button:FindFirstChild("Shadow")
+    local cooldown=main and main:FindFirstChild("RollCooldown")
+    return button,label,shadow,cooldown
 end
-local function safeName(obj)
-    local ok,s=pcall(function()return obj:GetFullName()end)
-    return ok and s or obj.Name
-end
-local function toolNames()
-    local ch=player.Character
-    local held={}
-    if ch then
-        for _,o in ipairs(ch:GetChildren()) do
-            if o:IsA("Tool") then held[#held+1]=o.Name end
-        end
+local function textOf(o)
+    if o and (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) then
+        return tostring(o.Text):sub(1,100)
     end
-    table.sort(held)
-    local back={}
-    local bp=player:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _,o in ipairs(bp:GetChildren()) do
-            if o:IsA("Tool") then back[#back+1]=o.Name end
-        end
-    end
-    table.sort(back)
-    return (#held>0 and table.concat(held,",") or "(none)"),(#back>0 and table.concat(back,",") or "(none)")
-end
-local function getText(path)
-    local o=player.PlayerGui
-    for _,n in ipairs(path) do
-        o=o and o:FindFirstChild(n)
-    end
-    if o and (o:IsA("TextLabel") or o:IsA("TextButton")) then return o.Text end
     return "(missing)"
 end
-local function rollSnapshot()
-    local held,back=toolNames()
-    local label=getText({"MainUI","RollButton","Label"})
-    local cool=getText({"MainUI","RollCooldown"})
-    local shadow=getText({"MainUI","RollButton","Shadow"})
-    return "label="..label.." | shadow="..shadow.." | cool="..cool.." | held="..held.." | bag="..back
+local function equipped()
+    local char=p.Character
+    if not char then return "(no character)" end
+    local held={}
+    for _,obj in ipairs(char:GetChildren()) do
+        if obj:IsA("Tool") then held[#held+1]=obj.Name end
+    end
+    return #held==0 and "(none)" or table.concat(held,",")
 end
-local function watchHook()
-    if namecallHooked then return end
-    namecallHooked=true
-    if type(hookmetamethod)~="function" or type(getnamecallmethod)~="function" then
-        note("Remote call observer unavailable; GUI/tool tracking works")
-        return
-    end
-    local original
-    local function observe(self,...)
-        if armed and typeof(self)=="Instance" and self:IsA("RemoteFunction")
-          and self.Name=="RollAttack" and getnamecallmethod()=="InvokeServer" then
-            local n=select("#",...)
-            note("RollAttack:InvokeServer args="..n)
-            task.delay(.5,function() if armed then note("AFTER 0.5s: "..rollSnapshot()) end end)
-            task.delay(2.4,function() if armed then note("AFTER 2.4s: "..rollSnapshot()) end end)
+local function attributeSummary(obj)
+    if not obj then return "" end
+    local names={}
+    for k,v in pairs(obj:GetAttributes()) do
+        local name=string.lower(k)
+        if name:find("roll",1,true) or name:find("attack",1,true)
+            or name:find("punch",1,true) or name:find("weapon",1,true)
+            or name:find("equip",1,true) then
+            names[#names+1]=k.."="..tostring(v):sub(1,50)
         end
-        return original(self,...)
     end
-    local wrapped=type(newcclosure)=="function" and newcclosure(observe) or observe
-    local ok,old=pcall(function()return hookmetamethod(game,"__namecall",wrapped)end)
-    if ok and type(old)=="function" then
-        original=old
-        note("Remote call observer ENABLED")
-    else
-        note("Remote call observer BLOCKED; GUI/tool tracking works")
+    table.sort(names)
+    if #names>8 then
+        for i=#names,9,-1 do names[i]=nil end
     end
+    return #names>0 and table.concat(names," | ") or "(none)"
+end
+local function snapshot()
+    local button,label,shadow,cooldown=getRollUI()
+    return "Roll="..textOf(label).." / "..textOf(shadow)
+        .." | Cooldown="..textOf(cooldown)
+        .." | Tool="..equipped()
+        .." | Player attrs="..attributeSummary(p)
+        .." | Character attrs="..attributeSummary(p.Character)
+end
+local function watchLabel(obj,which)
+    if not obj or not (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then return end
+    note(which.." initial: "..textOf(obj))
+    connect(obj:GetPropertyChangedSignal("Text"),function()
+        if scanning then note(which.." => "..textOf(obj)) end
+    end,scanConnections)
 end
 local function begin()
-    if not alive or armed then return end
-    armed=true
-    table.clear(notes)
+    if not alive or scanning then return end
+    clear(scanConnections)
+    for i=#lines,1,-1 do lines[i]=nil end
+    scanning=true
+    scanStart=os.clock()
     start.Text="SCANNING"
-    msg.Text="Tap NORMAL Roll once, then again when it allows. Don't use 3x TEST."
-    note("START | PlaceId="..game.PlaceId)
-    note("BASELINE "..rollSnapshot())
-    watchHook()
-    local prev=rollSnapshot()
-    local untilAt=os.clock()+18
-    task.spawn(function()
-        while alive and armed and os.clock()<untilAt do
-            local snap=rollSnapshot()
-            if snap~=prev then
-                note("STATE "..snap)
-                prev=snap
-            end
-            task.wait(.18)
+    status.Text="Tap the ORIGINAL Roll button. No remote requests are made."
+    note("START | PlaceId="..tostring(game.PlaceId))
+    note("BEFORE "..snapshot())
+    local button,label,shadow,cooldown=getRollUI()
+    if not button then
+        note("MainUI.RollButton not found; GUI may not be loaded.")
+    else
+        if button:IsA("GuiButton") then
+            connect(button.Activated,function()
+                if scanning then
+                    note("REAL ROLL BUTTON tapped")
+                    note("TAP STATE "..snapshot())
+                end
+            end,scanConnections)
         end
-        if not alive then return end
-        armed=false
-        note("END "..rollSnapshot())
+        watchLabel(label,"Roll Label")
+        watchLabel(shadow,"Roll Shadow")
+        watchLabel(cooldown,"Roll Cooldown")
+    end
+    local char=p.Character
+    if char then
+        connect(char.ChildAdded,function(obj)
+            if scanning and obj:IsA("Tool") then note("TOOL ADDED "..obj.Name) end
+        end,scanConnections)
+        connect(char.ChildRemoved,function(obj)
+            if scanning and obj:IsA("Tool") then note("TOOL REMOVED "..obj.Name) end
+        end,scanConnections)
+        connect(char.AttributeChanged,function(name)
+            if not scanning then return end
+            local s=name:lower()
+            if s:find("roll",1,true) or s:find("attack",1,true)
+               or s:find("punch",1,true) or s:find("equip",1,true) then
+                note("CHAR ATTRIBUTE "..name.."="..tostring(char:GetAttribute(name)))
+            end
+        end,scanConnections)
+    end
+    connect(p.AttributeChanged,function(name)
+        if not scanning then return end
+        local s=name:lower()
+        if s:find("roll",1,true) or s:find("attack",1,true)
+           or s:find("punch",1,true) or s:find("equip",1,true) then
+            note("PLAYER ATTRIBUTE "..name.."="..tostring(p:GetAttribute(name)))
+        end
+    end,scanConnections)
+    -- One wait task per scan; no per-frame polling and no metamethod interception.
+    task.delay(18,function()
+        if not alive or not scanning then return end
+        note("AFTER "..snapshot())
+        note("END. Scanner did not send or intercept game requests.")
+        scanning=false
+        clear(scanConnections)
         start.Text="SCAN AGAIN"
-        msg.Text="Copy report and paste it into ChatGPT."
+        status.Text="Scan finished. Copy report and paste it into ChatGPT."
     end)
 end
-wire(start.Activated,begin)
-wire(copy.Activated,function()
-    local s=table.concat(notes,"\n")
-    if type(setclipboard)=="function" and pcall(setclipboard,s) then
-        msg.Text="Report copied. Paste it here."
-    else
-        output.TextEditable=true
-        msg.Text="Clipboard unavailable. Select report text manually."
+connect(start.Activated,begin)
+connect(copy.Activated,function()
+    if not alive then return end
+    local s=table.concat(lines,"\n")
+    if type(setclipboard)=="function" then
+        local ok=pcall(setclipboard,s)
+        if ok then
+            status.Text="Report copied. Paste it into ChatGPT."
+            return
+        end
     end
+    output.TextEditable=true
+    status.Text="Clipboard unavailable; select report text manually."
 end)
--- Mobile drag from header only.
-local dragOrigin,panelOrigin,dragging
-wire(head.InputBegan,function(i)
-    if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
-        dragOrigin=i.Position
-        panelOrigin=panel.Position
+-- Touch drag support, restricted to one tracked touch.
+local dragging=false
+local dragPointer=nil
+local dragFrom=nil
+local panelFrom=nil
+connect(header.InputBegan,function(input)
+    if input.UserInputType==Enum.UserInputType.Touch
+        or input.UserInputType==Enum.UserInputType.MouseButton1 then
         dragging=true
-        local c
-        c=i.Changed:Connect(function()
-            if i.UserInputState==Enum.UserInputState.End then
+        dragPointer=input
+        dragFrom=input.Position
+        panelFrom=frame.Position
+        local changed
+        changed=input.Changed:Connect(function()
+            if input.UserInputState==Enum.UserInputState.End then
                 dragging=false
-                c:Disconnect()
+                if changed then changed:Disconnect() end
             end
         end)
     end
 end)
-wire(UserInputService.InputChanged,function(i)
-    if dragging and dragOrigin and
-      (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then
-        local d=i.Position-dragOrigin
-        panel.Position=UDim2.new(panelOrigin.X.Scale,panelOrigin.X.Offset+d.X,panelOrigin.Y.Scale,panelOrigin.Y.Offset+d.Y)
-    end
+connect(UIS.InputChanged,function(input)
+    if not dragging or not dragFrom or not panelFrom then return end
+    if input~=dragPointer and input.UserInputType~=Enum.UserInputType.MouseMovement then return end
+    local delta=input.Position-dragFrom
+    frame.Position=UDim2.new(panelFrom.X.Scale,panelFrom.X.Offset+delta.X,
+        panelFrom.Y.Scale,panelFrom.Y.Offset+delta.Y)
 end)
 local function shutdown()
     if not alive then return end
     alive=false
-    armed=false
-    for _,c in ipairs(connections)do pcall(function()c:Disconnect()end)end
-    pcall(function()gui:Destroy()end)
+    scanning=false
+    clear(scanConnections)
+    clear(connections)
+    pcall(function() screen:Destroy() end)
     if env.RNG_ROLL_STATE_SCAN_CLOSE==shutdown then env.RNG_ROLL_STATE_SCAN_CLOSE=nil end
 end
-wire(exit.Activated,shutdown)
+connect(exit.Activated,shutdown)
 env.RNG_ROLL_STATE_SCAN_CLOSE=shutdown
+print("[RNG Roll State Scanner V3] Safe passive scanner loaded; no hooks, no remote calls.")
