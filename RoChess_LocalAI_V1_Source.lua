@@ -123,7 +123,7 @@ local page=make("Frame",body,{
     Position=UDim2.fromOffset(13,51),Size=UDim2.new(1,-26,1,-58),
     BackgroundTransparency=1
 })
-local pages={},tabButtons={}
+local pages,tabButtons={},{}
 local function text(parent,value,y,h,size,bold,color)
     return make("TextLabel",parent,{
         Position=UDim2.fromOffset(0,y),Size=UDim2.new(1,0,0,h),
@@ -643,7 +643,8 @@ local function analyze()
     task.spawn(function()
         local move,score,nodes=getBest(snap)
         busy=false
-        if not active or version~=analysisVersion then return end
+        if not active then return end
+        if version~=analysisVersion then task.defer(analyze);return end
         suggestion=move
         if move then
             bestLabel.Text=moveUci(move)
@@ -733,6 +734,25 @@ local function scan()
                 end
             end
             log("GUI roots: "..table.concat(names,", "):sub(1,130))
+            local found=0
+            local total=0
+            for _,o in ipairs(pg:GetDescendants()) do
+                if o~=gui and not o:IsDescendantOf(gui)
+                   and o~=overlay and not o:IsDescendantOf(overlay) then
+                    total=total+1
+                    local n=o.Name:lower()
+                    if (n:find("board",1,true) or n:find("square",1,true)
+                        or n:find("piece",1,true) or n:find("chess",1,true)
+                        or n:find("tile",1,true) or n:find("game",1,true))
+                        and found<14 then
+                        log("UI CANDIDATE "..o.Name.." / "..o.ClassName..
+                            " / parent "..(o.Parent and o.Parent.Name or "?"))
+                        found=found+1
+                    end
+                    if total>=1500 then break end
+                end
+            end
+            log("UI SCAN SUMMARY: "..total.." objects; "..found.." candidates")
         end
     end)
 end
