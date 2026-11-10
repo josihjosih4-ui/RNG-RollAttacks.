@@ -721,7 +721,7 @@ local function getBest(s0,requestedVersion)
             principal=moveUci(localBest)
             completedDepth=depth
         end
-        if os.clock()>deadline*.999 then break end
+        if os.clock()>=deadline then break end
         if nodes>=preset.nodes then break end
     end
     return best,score,nodes,completedDepth
@@ -1119,6 +1119,9 @@ local function engineSelfTest()
         end
     end
     assert(foundMate,"mate-in-one legal generator test failed")
+    local mated=parseFen("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
+    assert(mated and inCheck(mated,-1) and #legal(mated)==0,
+        "terminal checkmate test failed")
 end
 local valid,err=pcall(engineSelfTest)
 if not valid then
@@ -1127,7 +1130,7 @@ if not valid then
     log("ENGINE SELF-CHECK FAILED: "..tostring(err):sub(1,150))
     status("Engine check failed. Auto Play disabled.")
 else
-    log("ENGINE SELF-CHECK PASSED: opening rules, FEN, and mate-in-one")
+    log("ENGINE SELF-CHECK PASSED: legal opening moves, mate and FEN")
 end
 paint()
 showPage("ASSIST")
