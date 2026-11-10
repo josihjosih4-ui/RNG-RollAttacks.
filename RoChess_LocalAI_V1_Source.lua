@@ -39,6 +39,7 @@ local suggestion=nil
 local calib={}
 local lastAnalysis=0
 local busy=false
+local engineHealthy=true
 local connections={}
 local logs={}
 local oppMoves,oppCaptures,oppChecks=0,0,0
@@ -607,6 +608,7 @@ local function learn(previous,nextState)
     end
 end
 local function checkAuto()
+    if not engineHealthy then return end
     if not auto or not synced or not suggestion or not s or #calib~=2 then return end
     if s.turn~=mySide or lastSentFen==currentFen then return end
     local fine,virtual=pcall(function()return game:GetService("VirtualInputManager")end)
@@ -644,7 +646,7 @@ local function checkAuto()
     end)
 end
 local function analyze()
-    if not s or busy then return end
+    if not engineHealthy or not s or busy then return end
     local version=analysisVersion
     local snap=s
     busy=true
@@ -883,6 +885,31 @@ local function shutdown()
 end
 hook(close.Activated,shutdown)
 E.ROCHESS_ATLAS_CLOSE=shutdown
+-- Verify core movement rules on the device before offering any suggestion.
+local function engineSelfTest()
+    local initial=parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    assert(initial and initial.turn==1,"cannot parse standard initial FEN")
+    local moves=legal(initial)
+    assert(#moves==20,"expected 20 legal starting moves, found "..#moves)
+    local first=nil
+    for _,m in ipairs(moves) do
+        if moveUci(m)=="e2e4" then first=m;break end
+    end
+    assert(first~=nil,"e2e4 missing")
+    local replyPosition=apply(initial,first)
+    assert(replyPosition.turn==-1,"turn didn't switch")
+    local replies=legal(replyPosition)
+    assert(#replies==20,"expected 20 legal black replies, found "..#replies)
+end
+local valid,err=pcall(engineSelfTest)
+if not valid then
+    engineHealthy=false
+    auto=false
+    log("ENGINE SELF-CHECK FAILED: "..tostring(err):sub(1,150))
+    status("Engine check failed. Auto Play disabled.")
+else
+    log("ENGINE SELF-CHECK PASSED: legal moves, FEN and turn changes")
+end
 paint()
 showPage("ASSIST")
 log("ATLAS launched. RoChess current place ID: "..game.PlaceId)
