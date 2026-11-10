@@ -463,6 +463,13 @@ local function eval(s0)
             if p:lower()=="p" then v=v+central*5+((sign==1 and rank(i)-2 or 7-rank(i))*4)
             elseif p:lower()=="n" or p:lower()=="b" then v=v+central*9
             elseif p:lower()=="q" then v=v+central*2 end
+            -- Adapt defensively to an opponent who frequently captures.
+            if p:lower()=="k" and sign==mySide and oppMoves>=3
+                and oppCaptures*3>=oppMoves then
+                local kingOnHomeSide=(sign==1 and rank(i)<=2)
+                    or (sign==-1 and rank(i)>=7)
+                if not kingOnHomeSide then v=v-35 end
+            end
             score=score+v*sign
         end
     end
@@ -478,7 +485,8 @@ end
 local function getBest(s0)
     local clock=os.clock()
     local nodes=0
-    local maxTime=.19
+    -- Spend a little longer checking tactics against capture-heavy opponents.
+    local maxTime=(oppMoves>=3 and oppCaptures*3>=oppMoves) and .26 or .19
     local aborted=false
     local function search(pos,depth,alpha,beta,ply)
         nodes=nodes+1
