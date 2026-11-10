@@ -1122,6 +1122,25 @@ local function engineSelfTest()
     local mated=parseFen("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
     assert(mated and inCheck(mated,-1) and #legal(mated)==0,
         "terminal checkmate test failed")
+    -- Special moves are critical for a reliable chess engine.
+    local castle=parseFen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    local bothCastles=0
+    for _,m in ipairs(legal(castle)) do
+        if m.castle and m.f==61 then bothCastles=bothCastles+1 end
+    end
+    assert(bothCastles==2,"castling generation test failed")
+    local enPassant=parseFen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1")
+    local canEP=false
+    for _,m in ipairs(legal(enPassant)) do
+        if m.ep and moveUci(m)=="e5d6" then canEP=true;break end
+    end
+    assert(canEP,"en passant test failed")
+    local promotion=parseFen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")
+    local promotions=0
+    for _,m in ipairs(legal(promotion)) do
+        if m.f==9 and m.t==1 and m.promo then promotions=promotions+1 end
+    end
+    assert(promotions==4,"promotion choice test failed")
 end
 local valid,err=pcall(engineSelfTest)
 if not valid then
